@@ -63,7 +63,10 @@ def calculate_time_in_state(mr, project_id):
     
     for event in events:
         event_time = datetime.fromisoformat(event.get("created_at").replace("Z", "+00:00"))
-        label_name = event.get("label", {}).get("name")
+        label = event.get("label")
+        if not label:
+            continue
+        label_name = label.get("name")
         action = event.get("action")  # "add" or "remove"
         
         if action == "add":
