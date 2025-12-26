@@ -35,11 +35,12 @@ services:
     image: grafana/grafana:latest
     container_name: gitlab-grafana
     ports:
-      - "3000:3000"
+      - "80:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_SERVER_HTTP_ADDR=0.0.0.0
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
     networks:
