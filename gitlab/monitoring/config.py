@@ -14,7 +14,7 @@ SMTP_PORT = 587
 SMTP_USER = ""  # Leave empty to disable email
 SMTP_PASSWORD = ""
 
-# Labels to track
+# Labels 
 LABEL_REWORK = "rework"
 LABEL_IN_REVIEW = "in-review"
 LABEL_REWORK_DONE = "rework-done"
