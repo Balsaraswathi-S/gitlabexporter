@@ -26,28 +26,53 @@ def gitlab_api(endpoint):
         return []
 
 def get_all_projects():
-    """Get all projects to monitor by repository name"""
+    """Get all projects to monitor - auto-discover or from config"""
     projects = []
-    for repo_name in config.REPOSITORIES:
-        # Search for project by name (all accessible projects)
-        result = gitlab_api(f"projects?search={repo_name}&membership=true")
-        if result:
-            for proj in result:
-                if proj['path'] == repo_name or proj['name'] == repo_name:
-                    projects.append(proj)
-                    print(f"[FOUND] {proj.get('path_with_namespace')}")
-                    break
-            else:
-                print(f"[NOT FOUND] Repository '{repo_name}' not accessible")
+    
+    if config.AUTO_DISCOVER_ALL_REPOS:
+        # AUTO-DISCOVER: Get ALL accessible repositories
+        print("[AUTO-DISCOVER] Fetching all accessible repositories...")
+        page = 1
+        while True:
+            result = gitlab_api(f"projects?membership=true&per_page=100&page={page}")
+            if not result:
+                break
+            projects.extend(result)
+            print(f"[FOUND] Page {page}: {len(result)} repos")
+            if len(result) < 100:  # Last page
+                break
+            page += 1
+        print(f"[TOTAL] Monitoring {len(projects)} repositories")
+    else:
+        # Use specific repositories from config
+        for repo_name in config.REPOSITORIES:
+            result = gitlab_api(f"projects?search={repo_name}&membership=true")
+            if result:
+                for proj in result:
+                    if proj['path'] == repo_name or proj['name'] == repo_name:
+                        projects.append(proj)
+                        print(f"[FOUND] {proj.get('path_with_namespace')}")
+                        break
+                else:
+                    print(f"[NOT FOUND] Repository '{repo_name}' not accessible")
+    
     return projects
 
 def get_merge_requests(project_id):
     """Get all merge requests for a project"""
-    return gitlab_api(f"projects/{project_id}/merge_requests?state=opened&per_page=100")
+    state = "all" if config.INCLUDE_CLOSED_MRS else "opened"
+    per_page = getattr(config, 'MAX_MRS_PER_REPO', 200)
+    return gitlab_api(f"projects/{project_id}/merge_requests?state={state}&per_page={per_page}&order_by=updated_at")
 
 def get_mr_label_events(project_id, mr_iid):
     """Get label change events for an MR"""
     return gitlab_api(f"projects/{project_id}/merge_requests/{mr_iid}/resource_label_events")
+
+def get_all_branches(project_id):
+    """Get all branches for a project (optional - for complete monitoring)"""
+    if not getattr(config, 'MONITOR_ALL_BRANCHES', False):
+        return []
+    return gitlab_api(f"projects/{project_id}/repository/branches?per_page=100")
 
 def calculate_time_in_state(mr, project_id):
     """Calculate time spent in each state based on label events"""
@@ -120,11 +145,12 @@ def collect_metrics():
     """Collect GitLab metrics"""
     now = time.time()
     
-    # Cache for 10 seconds for real-time updates
-    if now - metrics_cache["last_update"] < 10:
+    # Use configurable cache time for real-time updates
+    cache_seconds = getattr(config, 'CACHE_SECONDS', 10)
+    if now - metrics_cache["last_update"] < cache_seconds:
         return metrics_cache["data"]
     
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Collecting GitLab metrics...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Collecting GitLab metrics (cache: {cache_seconds}s)...")
     
     metrics = defaultdict(lambda: defaultdict(int))
     branch_metrics = []  # List of dicts with branch-level data
@@ -261,14 +287,14 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     # Always expose MR info (value=1) so branches are always available in dropdown
                     lines.append(f'gitlab_mr_info{{project="{project}",branch="{branch}",target="{target}",title="{title}"}} 1')
                     
-                    # Time metrics (only if > 0)
-                    if branch_data["time_in_rework"] > 0:
+                    # Time metrics - ALWAYS export (even if 0) so queries can count them
+                    if branch_data["has_rework"]:
                         lines.append(f'gitlab_mr_time_in_rework_hours{{project="{project}",branch="{branch}",target="{target}",title="{title}"}} {branch_data["time_in_rework"]:.2f}')
                     
-                    if branch_data["time_in_review"] > 0:
+                    if branch_data["has_in_review"]:
                         lines.append(f'gitlab_mr_time_in_review_hours{{project="{project}",branch="{branch}",target="{target}",title="{title}"}} {branch_data["time_in_review"]:.2f}')
                     
-                    if branch_data["time_to_complete"] > 0:
+                    if branch_data["has_rework_done"]:
                         lines.append(f'gitlab_mr_time_to_complete_hours{{project="{project}",branch="{branch}",target="{target}",title="{title}"}} {branch_data["time_to_complete"]:.2f}')
                 
                 self.send_response(200)
